@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Chatbot with History</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        /* Basic styling for a clean, modern look */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* Align to top for better content flow */
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+            width: 100%;
+            max-width: 700px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        .chat-messages {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 250px; /* Increased min-height for visible history */
+            max-height: 600px; /* Max height for scrollable history */
+            overflow-y: auto; /* Enable scrolling for history */
+            color: #343a40;
+            line-height: 1.6;
+            font-size: 0.95em;
+            display: flex;
+            flex-direction: column;
+            gap: 10px; /* Space between messages */
+        }
+        .message {
+            padding: 8px 12px;
+            border-radius: 6px;
+            word-wrap: break-word;
+            white-space: pre-wrap; /* Preserve line breaks from model */
+            max-width: 90%; /* Max width for message bubbles */
+        }
+        .user-message {
+            background-color: #e0f2fe; /* Light blue */
+            align-self: flex-end; /* Align user messages to the right */
+        }
+        .assistant-message {
+            background-color: #e9ecef; /* Light gray */
+            align-self: flex-start; /* Align assistant messages to the left */
+        }
+        .system-message {
+            background-color: #fff3cd; /* Light yellow for system info */
+            color: #856404;
+            text-align: center;
+            font-style: italic;
+            align-self: center;
+            width: 100%;
+        }
+        .message-input-form {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+        }
+        .message-input {
+            flex-grow: 1;
+            padding: 12px 15px;
+            border: 1px solid #dcdcdc;
+            border-radius: 8px;
+            font-size: 1em;
+            outline: none;
+            transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .message-input:focus {
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+        }
+        .send-button {
+            padding: 12px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out, transform 0.1s ease-in-out;
+        }
+        .send-button:hover {
+            background-color: #0056b3;
+            transform: translateY(-1px);
+        }
+        .send-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .loading-indicator {
+            text-align: center;
+            color: #6c757d;
+            font-style: italic;
+            margin-top: 10px;
+        }
+        .error-message {
+            color: #dc3545;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center; /* Vertically center items */
+            margin-top: 10px;
+            flex-wrap: wrap; /* Allow wrapping on small screens */
+            gap: 10px; /* Space between items if they wrap */
+        }
+        .clear-button {
+            padding: 8px 15px;
+            background-color: #dc3545; /* Red for clear */
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .clear-button:hover {
+            background-color: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ollama Streaming Chatbot</h1>
+        <div class="chat-messages" id="chat-messages">
+            <div class="message system-message">Loading chat history...</div>
+        </div>
+
+        <form id="chat-form" class="message-input-form">
+            <input type="text" id="question-input" class="message-input" placeholder="Ask me anything..." autocomplete="off">
+            <button type="submit" id="send-button" class="send-button">Ask</button>
+        </form>
+        
+        <div class="controls">
+            <div id="loading-indicator" class="loading-indicator" style="display: none;">Generating response...</div>
+            <div id="error-message" class="error-message" style="display: none;"></div>
+            <button type="button" id="clear-history-button" class="clear-button">Clear History</button>
+        </div>
+    </div>
+
+    <script>
+        const chatForm = document.getElementById('chat-form');
+        const questionInput = document.getElementById('question-input');
+        const sendButton = document.getElementById('send-button');
+        const chatMessages = document.getElementById('chat-messages'); // Main chat display area
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const errorMessage = document.getElementById('error-message');
+        const clearHistoryButton = document.getElementById('clear-history-button');
+
+        let abortController = null; // To cancel ongoing fetch requests
+
+        // Helper to append messages to the chat display
+        function appendMessage(role, content, isStreaming = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', `${role}-message`);
+            
+            // Add a strong tag for the role label, then the content
+            const roleLabel = document.createElement('strong');
+            roleLabel.textContent = `${role === 'user' ? 'You' : 'Bot'}: `;
+            messageDiv.appendChild(roleLabel);
+            
+            // Use a TextNode for dynamic content that can be easily updated
+            const contentTextNode = document.createTextNode(content); 
+            messageDiv.appendChild(contentTextNode);
+
+            if (isStreaming) {
+                // Assign a temporary ID to the streaming message's div for easy updates
+                messageDiv.id = 'current-streaming-message'; 
+            } else {
+                messageDiv.removeAttribute('id'); // Ensure no ID if it's a static message
+            }
+
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll to bottom
+            return contentTextNode; // Return the TextNode to append more text to it
+        }
+
+        // Function to load and display chat history on page load
+        async function loadChatHistory() {
+            try {
+                const response = await fetch('/history');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                const history = await response.json();
+                chatMessages.innerHTML = ''; // Clear initial "Loading history..." message
+
+                if (history.length === 0) {
+                    appendMessage('system', 'No previous chat history. Start a new conversation!');
+                } else {
+                    history.forEach(msg => {
+                        appendMessage(msg.role, msg.content);
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading chat history:', error);
+                errorMessage.textContent = `Failed to load history: ${error.message}`;
+                errorMessage.style.display = 'block';
+            }
+        }
+
+        // Event listener for the chat form submission
+        chatForm.addEventListener('submit', async (event) => {
+            event.preventDefault(); // Prevent default form submission (page reload)
+
+            if (abortController) {
+                // If a request is already in progress, pressing the button again will abort it
+                abortController.abort();
+                abortController = null; // Clear the controller
+                sendButton.textContent = 'Ask'; // Reset button text
+                loadingIndicator.style.display = 'none';
+                errorMessage.style.display = 'none';
+                questionInput.disabled = false; // Re-enable input
+                return; // Stop here, don't start a new request
+            }
+
+            const question = questionInput.value.trim();
+            if (!question) {
+                // Client-side validation: don't send empty questions
+                errorMessage.textContent = "Please enter a question.";
+                errorMessage.style.display = 'block';
+                return;
+            }
+
+            // --- UI Updates before sending request ---
+            appendMessage('user', question); // Display user's question immediately
+            questionInput.value = ''; // Clear input field
+            errorMessage.style.display = 'none'; // Hide previous errors
+            loadingIndicator.style.display = 'block'; // Show loading indicator
+            sendButton.textContent = 'Stop'; // Change button text to 'Stop'
+            sendButton.disabled = false; // Ensure button is enabled to allow stopping
+            questionInput.disabled = true; // Disable input during generation
+
+            // Prepare for streaming assistant response: add a placeholder message
+            const assistantTextNode = appendMessage('assistant', '', true); // Get the text node to update
+
+            abortController = new AbortController(); // Create a new controller for this request
+            const signal = abortController.signal; // Get the signal for fetch
+
+            try {
+                const response = await fetch('/ask', { // Flask API endpoint
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ question: question }),
+                    signal: signal, // Attach the abort signal
+                });
+
+                if (!response.ok) {
+                    // If the server responded with an HTTP error, parse its error message
+                    const errorData = await response.json(); 
+                    throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let accumulatedChunk = '';
+                
+                // Stream reading loop
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    // Decode the chunk and append to accumulated string for SSE parsing
+                    accumulatedChunk += decoder.decode(value, { stream: true });
+
+                    // SSE messages are delimited by double newlines (\n\n)
+                    const messages = accumulatedChunk.split('\n\n');
+                    // Keep the last (potentially incomplete) message for the next chunk
+                    accumulatedChunk = messages.pop(); 
+
+                    for (const message of messages) {
+                        if (message.startsWith('data: ')) {
+                            try {
+                                const jsonData = message.substring(6); // Remove "data: " prefix
+                                const parsedData = JSON.parse(jsonData);
+
+                                if (parsedData.token) {
+                                    assistantTextNode.textContent += parsedData.token; // Append token to the assistant's message
+                                    chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll
+                                } else if (parsedData.error) {
+                                    // If the server sends an error message mid-stream
+                                    errorMessage.textContent = `API Error: ${parsedData.error}`;
+                                    errorMessage.style.display = 'block';
+                                    reader.cancel(); // Stop reading on error
+                                    break; // Exit inner loop
+                                }
+                            } catch (jsonError) {
+                                console.error("Failed to parse JSON chunk:", message, jsonError);
+                                errorMessage.textContent = "Error: Invalid data received from server.";
+                                errorMessage.style.display = 'block';
+                                reader.cancel();
+                                break;
+                            }
+                        }
+                    }
+                }
+                // After the stream is complete, remove the temporary ID from the message div
+                const streamingMessageDiv = document.getElementById('current-streaming-message');
+                if (streamingMessageDiv) {
+                    streamingMessageDiv.removeAttribute('id');
+                }
+
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('Fetch aborted by user');
+                    // Update the streaming message with an aborted status
+                    assistantTextNode.textContent += '\n(Generation aborted)';
+                } else {
+                    console.error('Error fetching data:', error);
+                    errorMessage.textContent = `Network Error: ${error.message}`;
+                    errorMessage.style.display = 'block';
+                    // If no tokens were received or an error occurred before any content, show error in message area
+                    if (assistantTextNode.textContent.trim() === '') {
+                        assistantTextNode.textContent = 'Error: Could not get response.';
+                    }
+                }
+            } finally {
+                loadingIndicator.style.display = 'none';
+                sendButton.textContent = 'Ask'; // Reset button text
+                sendButton.disabled = false; // Re-enable button
+                questionInput.disabled = false; // Re-enable input
+                abortController = null; // Clear the controller
+                chatMessages.scrollTop = chatMessages.scrollHeight; // Final scroll to bottom
+            }
+        });
+
+        // Event listener for the Clear History button
+        clearHistoryButton.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to clear the entire chat history? This cannot be undone.')) {
+                return;
+            }
+            try {
+                const response = await fetch('/clear_history', { method: 'POST' });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                const result = await response.json();
+                if (result.success) {
+                    chatMessages.innerHTML = ''; // Clear display
+                    appendMessage('system', 'Chat history cleared. Start a new conversation!');
+                    console.log(result.success);
+                } else {
+                    errorMessage.textContent = `Error clearing history: ${result.error}`;
+                    errorMessage.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error clearing history:', error);
+                errorMessage.textContent = `Failed to clear history: ${error.message}`;
+                errorMessage.style.display = 'block';
+            }
+        });
+
+        // Initial load of chat history when the page loads
+        document.addEventListener('DOMContentLoaded', loadChatHistory);
+    </script>
+</body>
+</html>
