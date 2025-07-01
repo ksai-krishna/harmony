@@ -15,6 +15,7 @@ from langchain_chroma import Chroma
 from langchain.chains import RetrievalQA
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_mcp_adapters import load_mcp_tools
 
 DB_DIR = "./chroma_db"  # Directory to store the Chroma vector store
 EMBEDDING_MODEL_NAME = "nomic-embed-text"  # Replace with your actual model name
@@ -69,8 +70,25 @@ def get_current_time_and_day() -> str:
 # This allows the LLM to execute Python code for arithmetic.
 calculator_tool = PythonREPLTool()
 
+# -- MCP Tools --
+
+mcp_tools = load_mcp_tools(
+    base_url="http://localhost:3333",  # or wherever your MCP server is hosted
+    tool_uris=[
+        "tool://get_time",
+        "tool://add_expense",
+        "tool://get_expense_history",
+    ],
+    resources=["db://expenses_db"]
+)
+
+
 # List of tools available to the agent
-tools = [get_current_time_and_day,rag_tool]
+tools = [
+    get_current_time_and_day,
+    rag_tool,
+    *mcp_tools
+    ]
 
 # --- 2. Initialize LLM ---
 # Using the latest ChatOllama from langchain_ollama
