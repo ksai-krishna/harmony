@@ -75,7 +75,7 @@ tools = [get_current_time_and_day,rag_tool]
 # --- 2. Initialize LLM ---
 # Using the latest ChatOllama from langchain_ollama
 llm = ChatOllama(model=LLM_MODEL_NAME)
-
+ 
 # --- 3. Create the Agent ---
 
 # Agent Prompt Template - Crucial for guiding the LLM
